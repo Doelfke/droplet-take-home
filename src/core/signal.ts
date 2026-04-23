@@ -99,25 +99,41 @@ export function getSignals(phase: IntersectionPhase): IntersectionSignals {
 // Movement permission
 // ---------------------------------------------------------------------------
 
+// Maps each direction to the cross-traffic direction that conflicts with a right turn.
+// e.g. a northbound car turning right (east) must yield to westbound straight traffic.
+const RIGHT_TURN_CONFLICT: Record<Direction, Direction> = {
+  north: 'west',
+  south: 'east',
+  east: 'north',
+  west: 'south',
+};
+
 /**
  * Returns true if a car in the given direction + lane can begin moving.
  *
  * For flashing-orange left turns the caller must supply whether oncoming
  * traffic is present; if it is, the car must wait.
+ *
+ * Pass `phase` so right-on-red can be blocked during PEDESTRIAN_CLEAR.
  */
 export function canMove(
   direction: Direction,
   laneType: LaneType,
   signals: IntersectionSignals,
   hasOncomingConflict: boolean,
+  phase?: IntersectionPhase,
 ): boolean {
   const sig = signals[direction];
   switch (laneType) {
     case 'straight':
       return sig.straight === 'green';
-    case 'right':
-      // Right-turn-on-green (simplified: no right-on-red).
-      return sig.straight === 'green';
+    case 'right': {
+      if (sig.straight === 'green') return true;
+      // Right-on-red: blocked during pedestrian clear and when cross traffic has green or yellow.
+      if (phase === IntersectionPhase.PEDESTRIAN_CLEAR) return false;
+      const crossStraight = signals[RIGHT_TURN_CONFLICT[direction]].straight;
+      return crossStraight !== 'green' && crossStraight !== 'yellow';
+    }
     case 'left':
       if (sig.left === 'green') return true;
       if (sig.left === 'flashingOrange') return !hasOncomingConflict;

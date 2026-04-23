@@ -261,7 +261,7 @@ function tickDepartures(s: IntersectionState, deltaMs: number): IntersectionStat
       // Check oncoming conflict for flashing-orange left turns
       const hasConflict = type === 'left' ? hasOncomingConflict(state, dir) : false;
 
-      if (!canMove(dir, type, signals, hasConflict)) continue;
+      if (!canMove(dir, type, signals, hasConflict, s.phase)) continue;
 
       // Stagger: only start a new departure if no car from this lane+direction
       // began clearing within the last STAGGER window

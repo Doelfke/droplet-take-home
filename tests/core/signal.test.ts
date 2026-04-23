@@ -144,7 +144,31 @@ describe('canMove', () => {
 
   it('allows right turn on green', () => {
     const sigs = getSignals(IntersectionPhase.NS_STRAIGHT);
-    expect(canMove('north', 'right', sigs, false)).toBe(true);
+    expect(canMove('north', 'right', sigs, false, IntersectionPhase.NS_STRAIGHT)).toBe(true);
+  });
+
+  it('allows right-on-red when cross traffic is stopped (NS_LEFT phase)', () => {
+    // During NS_LEFT all straights are red, so E/W right-on-red is safe
+    const sigs = getSignals(IntersectionPhase.NS_LEFT);
+    expect(canMove('east', 'right', sigs, false, IntersectionPhase.NS_LEFT)).toBe(true);
+    expect(canMove('west', 'right', sigs, false, IntersectionPhase.NS_LEFT)).toBe(true);
+    expect(canMove('north', 'right', sigs, false, IntersectionPhase.NS_LEFT)).toBe(true);
+    expect(canMove('south', 'right', sigs, false, IntersectionPhase.NS_LEFT)).toBe(true);
+  });
+
+  it('blocks right-on-red when cross traffic has green', () => {
+    // During EW_STRAIGHT, east/west have green straight.
+    // A northbound car turning right conflicts with westbound straight traffic.
+    const sigs = getSignals(IntersectionPhase.EW_STRAIGHT);
+    expect(canMove('north', 'right', sigs, false, IntersectionPhase.EW_STRAIGHT)).toBe(false);
+    expect(canMove('south', 'right', sigs, false, IntersectionPhase.EW_STRAIGHT)).toBe(false);
+  });
+
+  it('blocks right-on-red during PEDESTRIAN_CLEAR', () => {
+    const sigs = getSignals(IntersectionPhase.PEDESTRIAN_CLEAR);
+    for (const dir of DIRECTIONS) {
+      expect(canMove(dir, 'right', sigs, false, IntersectionPhase.PEDESTRIAN_CLEAR)).toBe(false);
+    }
   });
 
   it('covers all lane types without throwing', () => {
@@ -152,7 +176,7 @@ describe('canMove', () => {
       const sigs = getSignals(phase);
       for (const dir of DIRECTIONS) {
         for (const type of LANE_TYPES) {
-          expect(() => canMove(dir, type, sigs, false)).not.toThrow();
+          expect(() => canMove(dir, type, sigs, false, phase)).not.toThrow();
         }
       }
     }
