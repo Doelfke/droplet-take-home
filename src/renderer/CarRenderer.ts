@@ -56,10 +56,13 @@ const LANE_ORDER: Record<LaneType, number[]> = {
 function laneX_NS(dir: Direction, laneType: LaneType, laneIndex = 0): number {
   const order = LANE_ORDER[laneType][laneIndex] ?? LANE_ORDER[laneType][0] ?? 0;
   if (dir === 'north') {
-    // Southbound: west half of N-S road (BOX_LEFT .. CENTER_X)
-    return BOX_LEFT + order * LANE_W + LANE_W / 2;
+    // Southbound: west half of N-S road (BOX_LEFT .. CENTER_X).
+    // Lane 0 = left-turn = innermost (closest to centre line = CENTER_X side).
+    // Reverse the physical index so order 0 lands at the inner lane.
+    return BOX_LEFT + (3 - order) * LANE_W + LANE_W / 2;
   } else {
-    // Northbound: east half of N-S road (CENTER_X .. BOX_RIGHT)
+    // Northbound: east half of N-S road (CENTER_X .. BOX_RIGHT).
+    // Lane 0 = left-turn = innermost (closest to centre line = CENTER_X side). Correct as-is.
     return CENTER_X + order * LANE_W + LANE_W / 2;
   }
 }
@@ -68,17 +71,28 @@ function laneX_NS(dir: Direction, laneType: LaneType, laneIndex = 0): number {
 function laneY_EW(dir: Direction, laneType: LaneType, laneIndex = 0): number {
   const order = LANE_ORDER[laneType][laneIndex] ?? LANE_ORDER[laneType][0] ?? 0;
   if (dir === 'west') {
-    // Eastbound: south half of E-W road (CENTER_Y .. BOX_BOTTOM)
+    // Eastbound: south half of E-W road (CENTER_Y .. BOX_BOTTOM).
+    // Lane 0 = left-turn = innermost (closest to centre line = CENTER_Y side). Correct as-is.
     return CENTER_Y + order * LANE_W + LANE_W / 2;
   } else {
-    // Westbound: north half of E-W road (BOX_TOP .. CENTER_Y)
-    return BOX_TOP + order * LANE_W + LANE_W / 2;
+    // Westbound: north half of E-W road (BOX_TOP .. CENTER_Y).
+    // Lane 0 = left-turn = innermost (closest to centre line = CENTER_Y side).
+    // Reverse the physical index so order 0 lands at the inner (south) lane.
+    return BOX_TOP + (3 - order) * LANE_W + LANE_W / 2;
   }
 }
 
 // ---------------------------------------------------------------------------
 // Public entry
 // ---------------------------------------------------------------------------
+
+/** Heading angle (radians) for a car facing its travel direction. */
+const DIR_ANGLES: Record<Direction, number> = {
+  north: Math.PI / 2, // heading south on canvas
+  south: -Math.PI / 2, // heading north on canvas
+  west: 0, // heading right
+  east: Math.PI, // heading left
+};
 
 export function drawCars(
   ctx: CanvasRenderingContext2D,
@@ -90,7 +104,7 @@ export function drawCars(
     const [dir, type] = key.split(':') as [Direction, LaneType];
     queue.forEach((car, idx) => {
       const pos = getQueuedCarPosition(dir, type, idx);
-      drawCar(ctx, pos.x, pos.y, dir, car);
+      drawCar(ctx, pos.x, pos.y, DIR_ANGLES[dir], car);
     });
   });
 
@@ -98,7 +112,7 @@ export function drawCars(
   for (const car of clearing) {
     if (!isClearing(car)) continue;
     const pos = getClearingCarPosition(car);
-    drawCar(ctx, pos.x, pos.y, car.direction, car);
+    drawCar(ctx, pos.x, pos.y, pos.angle, car);
   }
 }
 
@@ -142,45 +156,132 @@ function getQueuedCarPosition(
 }
 
 // ---------------------------------------------------------------------------
-// Clearing car positions (animated through intersection box)
+// Bezier path helpers
 // ---------------------------------------------------------------------------
 
-function getClearingCarPosition(car: Car): { x: number; y: number } {
-  const t = car.clearingProgress ?? 0; // 0..1
+const ARM_LENGTH = ROAD_HALF;
+const EXIT = ARM_LENGTH * 0.5;
 
-  switch (car.direction) {
+// Centre of outbound through-lanes for each exit direction
+const EXIT_EAST_Y = CENTER_Y + LANE_W * 1.5; // eastbound  (west-arm  lanes)
+const EXIT_WEST_Y = BOX_TOP + LANE_W * 1.5; // westbound  (east-arm  lanes)
+const EXIT_SOUTH_X = BOX_LEFT + LANE_W * 1.5; // southbound (north-arm lanes)
+const EXIT_NORTH_X = CENTER_X + LANE_W * 1.5; // northbound (south-arm lanes)
+
+interface Vec2 {
+  x: number;
+  y: number;
+}
+
+/** Quadratic bezier position at parameter t ∈ [0,1]. */
+function qbPos(p0: Vec2, p1: Vec2, p2: Vec2, t: number): Vec2 {
+  const u = 1 - t;
+  return {
+    x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
+    y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y,
+  };
+}
+
+/** Quadratic bezier tangent direction at parameter t. */
+function qbTangent(p0: Vec2, p1: Vec2, p2: Vec2, t: number): Vec2 {
+  const u = 1 - t;
+  return {
+    x: 2 * u * (p1.x - p0.x) + 2 * t * (p2.x - p1.x),
+    y: 2 * u * (p1.y - p0.y) + 2 * t * (p2.y - p1.y),
+  };
+}
+
+/**
+ * Returns the three bezier control points for a clearing car's path.
+ *
+ * Straight cars use collinear p1 (midpoint) → linear path.
+ * Turning cars use the perpendicular-corner construction:
+ *   - For NS cars: p1.x = p0.x, p1.y = p2.y
+ *   - For EW cars: p1.x = p2.x, p1.y = p0.y
+ */
+function getClearingPath(
+  direction: Direction,
+  laneType: LaneType,
+): { p0: Vec2; p1: Vec2; p2: Vec2 } {
+  switch (direction) {
     case 'north': {
-      // Southbound: entering from top, exiting at bottom
-      const cx = laneX_NS('north', car.laneType);
-      const startY = BOX_TOP;
-      const endY = BOX_BOTTOM + ARM_LENGTH * 0.5;
-      return { x: cx, y: lerp(startY, endY, t) };
+      const x0 = laneX_NS('north', laneType);
+      const p0: Vec2 = { x: x0, y: BOX_TOP };
+      if (laneType === 'straight') {
+        const p2: Vec2 = { x: x0, y: BOX_BOTTOM + EXIT };
+        return { p0, p1: { x: x0, y: (BOX_TOP + BOX_BOTTOM + EXIT) / 2 }, p2 };
+      } else if (laneType === 'left') {
+        // Left turn → exits east arm going east
+        const p2: Vec2 = { x: BOX_RIGHT + EXIT, y: EXIT_EAST_Y };
+        return { p0, p1: { x: p0.x, y: p2.y }, p2 };
+      } else {
+        // Right turn → exits west arm going west
+        const p2: Vec2 = { x: BOX_LEFT - EXIT, y: EXIT_WEST_Y };
+        return { p0, p1: { x: p0.x, y: p2.y }, p2 };
+      }
     }
     case 'south': {
-      const cx = laneX_NS('south', car.laneType);
-      const startY = BOX_BOTTOM;
-      const endY = BOX_TOP - ARM_LENGTH * 0.5;
-      return { x: cx, y: lerp(startY, endY, t) };
+      const x0 = laneX_NS('south', laneType);
+      const p0: Vec2 = { x: x0, y: BOX_BOTTOM };
+      if (laneType === 'straight') {
+        const p2: Vec2 = { x: x0, y: BOX_TOP - EXIT };
+        return { p0, p1: { x: x0, y: (BOX_BOTTOM + BOX_TOP - EXIT) / 2 }, p2 };
+      } else if (laneType === 'left') {
+        // Left turn → exits west arm going west
+        const p2: Vec2 = { x: BOX_LEFT - EXIT, y: EXIT_WEST_Y };
+        return { p0, p1: { x: p0.x, y: p2.y }, p2 };
+      } else {
+        // Right turn → exits east arm going east
+        const p2: Vec2 = { x: BOX_RIGHT + EXIT, y: EXIT_EAST_Y };
+        return { p0, p1: { x: p0.x, y: p2.y }, p2 };
+      }
     }
     case 'west': {
-      const cy = laneY_EW('west', car.laneType);
-      const startX = BOX_LEFT;
-      const endX = BOX_RIGHT + ARM_LENGTH * 0.5;
-      return { x: lerp(startX, endX, t), y: cy };
+      const y0 = laneY_EW('west', laneType);
+      const p0: Vec2 = { x: BOX_LEFT, y: y0 };
+      if (laneType === 'straight') {
+        const p2: Vec2 = { x: BOX_RIGHT + EXIT, y: y0 };
+        return { p0, p1: { x: (BOX_LEFT + BOX_RIGHT + EXIT) / 2, y: y0 }, p2 };
+      } else if (laneType === 'left') {
+        // Left turn → exits north arm going north
+        const p2: Vec2 = { x: EXIT_NORTH_X, y: BOX_TOP - EXIT };
+        return { p0, p1: { x: p2.x, y: p0.y }, p2 };
+      } else {
+        // Right turn → exits south arm going south
+        const p2: Vec2 = { x: EXIT_SOUTH_X, y: BOX_BOTTOM + EXIT };
+        return { p0, p1: { x: p2.x, y: p0.y }, p2 };
+      }
     }
     case 'east': {
-      const cy = laneY_EW('east', car.laneType);
-      const startX = BOX_RIGHT;
-      const endX = BOX_LEFT - ARM_LENGTH * 0.5;
-      return { x: lerp(startX, endX, t), y: cy };
+      const y0 = laneY_EW('east', laneType);
+      const p0: Vec2 = { x: BOX_RIGHT, y: y0 };
+      if (laneType === 'straight') {
+        const p2: Vec2 = { x: BOX_LEFT - EXIT, y: y0 };
+        return { p0, p1: { x: (BOX_RIGHT + BOX_LEFT - EXIT) / 2, y: y0 }, p2 };
+      } else if (laneType === 'left') {
+        // Left turn → exits south arm going south
+        const p2: Vec2 = { x: EXIT_SOUTH_X, y: BOX_BOTTOM + EXIT };
+        return { p0, p1: { x: p2.x, y: p0.y }, p2 };
+      } else {
+        // Right turn → exits north arm going north
+        const p2: Vec2 = { x: EXIT_NORTH_X, y: BOX_TOP - EXIT };
+        return { p0, p1: { x: p2.x, y: p0.y }, p2 };
+      }
     }
   }
 }
 
-const ARM_LENGTH = ROAD_HALF;
+// ---------------------------------------------------------------------------
+// Clearing car positions (animated through intersection box)
+// ---------------------------------------------------------------------------
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
+function getClearingCarPosition(car: Car): { x: number; y: number; angle: number } {
+  const t = car.clearingProgress ?? 0;
+  const { p0, p1, p2 } = getClearingPath(car.direction, car.laneType);
+  const pos = qbPos(p0, p1, p2, t);
+  const tan = qbTangent(p0, p1, p2, t);
+  const angle = Math.atan2(tan.y, tan.x);
+  return { x: pos.x, y: pos.y, angle };
 }
 
 // ---------------------------------------------------------------------------
@@ -191,23 +292,14 @@ function drawCar(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
-  dir: Direction,
-  _car: Car,
+  angle: number,
+  car: Car,
 ): void {
-  void _car;
-  const color = DIR_COLORS[dir];
+  const color = DIR_COLORS[car.direction];
 
   ctx.save();
   ctx.translate(cx, cy);
-
-  // Rotate to face travel direction
-  const rot: Record<Direction, number> = {
-    north: Math.PI / 2, // heading south on canvas
-    south: -Math.PI / 2, // heading north on canvas
-    west: 0, // heading right
-    east: Math.PI, // heading left
-  };
-  ctx.rotate(rot[dir]);
+  ctx.rotate(angle);
 
   const hw = CAR_W / 2;
   const hh = CAR_H / 2;

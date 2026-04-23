@@ -20,7 +20,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const HEAD_W = 16;
-const HEAD_H = 34; // holds straight signal (2 lights) and left-turn signal (2 lights)
+const HEAD_H = 60; // holds main signal (3 lights: R/Y/G) + left-turn light
 const BULB_R = 5.5;
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ export function drawSignals(
   drawSignalHead(
     ctx,
     BOX_LEFT - 8 - HEAD_H,
-    BOX_TOP + ROAD_HALF + 8,
+    BOX_BOTTOM + 8 - HEAD_W,
     'horizontal',
     signals.west.straight,
     signals.west.left,
@@ -160,8 +160,8 @@ function drawSignalHead(
         bulb === 'flashingOrange' && !flashingOn ? false : lit,
       );
     });
-    // Left-turn signal (bottom area)
-    const ltY = y + hh - BULB_R - 4;
+    // Left-turn signal – same spacing formula as main bulbs, index = mainSignals.length
+    const ltY = y + BULB_R + 2 + mainSignals.length * (BULB_R * 2 + 3);
     const ltLit = leftColor === 'flashingOrange' ? flashingOn : leftColor !== 'red';
     const ltColor = leftColor === 'flashingOrange' ? 'flashingOrange' : leftColor;
     drawBulb(ctx, cx, ltY, BULB_R, ltColor, ltLit, ltLit);
@@ -172,7 +172,7 @@ function drawSignalHead(
       const bx = x + BULB_R + 2 + i * (BULB_R * 2 + 3);
       drawBulb(ctx, bx, cy, BULB_R, bulb, lit, lit);
     });
-    const ltX = x + hw - BULB_R - 4;
+    const ltX = x + BULB_R + 2 + mainSignals.length * (BULB_R * 2 + 3);
     const ltLit = leftColor === 'flashingOrange' ? flashingOn : leftColor !== 'red';
     const ltColor = leftColor === 'flashingOrange' ? 'flashingOrange' : leftColor;
     drawBulb(ctx, ltX, cy, BULB_R, ltColor, ltLit, ltLit);

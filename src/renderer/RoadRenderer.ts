@@ -273,13 +273,14 @@ function drawLaneArrows(ctx: CanvasRenderingContext2D): void {
   drawArrow(ctx, arrowX_W, eastLaneCentres[2]!, 'right');
   drawArrow(ctx, arrowX_W, eastLaneCentres[3]!, 'down-from-east');
 
-  // East approach (westbound): top half lanes
+  // East approach (westbound): top half lanes.
+  // Lane order on canvas: [0]=north edge (driver's right=right-turn), [3]=south edge (driver's left=left-turn).
   const westLaneCentres = [0, 1, 2, 3].map((i) => BOX_TOP + LANE_W * (i + 0.5));
   const arrowX_E = BOX_RIGHT + 60;
-  drawArrow(ctx, arrowX_E, westLaneCentres[0]!, 'down-from-west');
+  drawArrow(ctx, arrowX_E, westLaneCentres[0]!, 'up-from-west'); // right turn
   drawArrow(ctx, arrowX_E, westLaneCentres[1]!, 'left');
   drawArrow(ctx, arrowX_E, westLaneCentres[2]!, 'left');
-  drawArrow(ctx, arrowX_E, westLaneCentres[3]!, 'up-from-west');
+  drawArrow(ctx, arrowX_E, westLaneCentres[3]!, 'down-from-west'); // left turn
 }
 
 type ArrowDir =
