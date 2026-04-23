@@ -1,0 +1,34 @@
+name: Copilot Code Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  review:
+    name: Request Copilot Review
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Request Copilot as reviewer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.request(
+                'POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers',
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.payload.pull_request.number,
+                  reviewers: ['github-copilot[bot]'],
+                }
+              );
+            } catch (err) {
+              // Copilot code review may need to be enabled in repo Settings →
+              // Code security → Copilot code review before this takes effect.
+              core.warning(`Could not request Copilot review: ${err.message}`);
+            }
